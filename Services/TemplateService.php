@@ -192,6 +192,7 @@ class TemplateService {
     // Read config.json for template
     $str = file_get_contents($file);
     $config = json_decode($str);
+    $template = null;
 
     if ($config->type == 'screen') {
       // Try to load the template.
@@ -230,13 +231,14 @@ class TemplateService {
       $entityManager->persist($template);
     }
 
-    $entityManager->flush();
+    return $template;
   }
 
   private function loadSlideTemplate($file, $templateRepository, $entityManager, $dir, $serverAddress, $path) {
     // Read config.json for template
     $str = file_get_contents($file);
     $config = json_decode($str);
+    $template = null;
 
     if ($config->type == 'slide') {
       // Try to load the template.
@@ -284,7 +286,7 @@ class TemplateService {
       $entityManager->persist($template);
     }
 
-    $entityManager->flush();
+    return $template;
   }
 
   /**
@@ -294,33 +296,64 @@ class TemplateService {
     // Get database hooks.
     $doctrine = $this->container->get('doctrine');
     $slideTemplateRepository = $doctrine->getRepository('Os2DisplayCoreBundle:SlideTemplate');
-    $screenemplateRepository = $doctrine->getRepository('Os2DisplayCoreBundle:ScreenTemplate');
+    $screenTemplateRepository = $doctrine->getRepository('Os2DisplayCoreBundle:ScreenTemplate');
     $entityManager = $doctrine->getManager();
 
     // Get parameters.
     $path = $this->container->get('kernel')->getRootDir() . '/../web/';
     $serverAddress = $this->container->getParameter('absolute_path_to_server');
 
+    // Find already installed templates
+    $previousSlideTemplates = $slideTemplateRepository->findAll();
+    $previousScreenTemplates = $screenTemplateRepository->findAll();
+
+    $installedSlideTemplates = [];
+    $installedScreenTemplates = [];
+
     // Locate templates in /web/bundles/
     $templates = $this->findTemplates($path . 'bundles/');
 
     foreach ($templates['slides'] as $config) {
       $dir = explode('/web/', pathinfo($config, PATHINFO_DIRNAME));
-      $this->loadSlideTemplate($config, $slideTemplateRepository, $entityManager, $dir[1], $serverAddress, $path);
+      $template = $this->loadSlideTemplate($config, $slideTemplateRepository, $entityManager, $dir[1], $serverAddress, $path);
+
+      if ($template !== null) {
+          $installedSlideTemplates[$template->getId()] = $template;
+      }
     }
 
     foreach ($templates['screens'] as $config) {
       $dir = explode('/web/', pathinfo($config, PATHINFO_DIRNAME));
-      $this->loadScreenTemplate($config, $screenemplateRepository, $entityManager, $dir[1], $serverAddress, $path);
+      $template = $this->loadScreenTemplate($config, $screenTemplateRepository, $entityManager, $dir[1], $serverAddress, $path);
+
+      if ($template !== null) {
+        $installedScreenTemplates[$template->getId()] = $template;
+      }
     }
 
-    // Get all templates from the database, and push update to screens.
-    $existingTemplates = $screenemplateRepository->findAll();
+    // Clear templates that do not exist in the database.
+    /* @var SlideTemplate $previousSlideTemplate */
+    foreach ($previousSlideTemplates as $previousSlideTemplate) {
+        if (!isset($installedSlideTemplates[$previousSlideTemplate->getId()])) {
+            $entityManager->remove($previousSlideTemplate);
+        }
+    }
+    /* @var ScreenTemplate $previousScreenTemplate */
+    foreach ($previousScreenTemplates as $previousScreenTemplate) {
+      if (!isset($installedScreenTemplates[$previousScreenTemplate->getId()])) {
+          $entityManager->remove($previousScreenTemplate);
+      }
+    }
+
+    // Get all screen templates from the database, and push update to screens.
+    $existingTemplates = $screenTemplateRepository->findAll();
     $middlewareService = $this->container->get('os2display.middleware.communication');
     foreach ($existingTemplates as $template) {
       foreach ($template->getScreens() as $screen) {
         $middlewareService->pushScreenUpdate($screen);
       }
     }
+
+    $entityManager->flush();
   }
 }
